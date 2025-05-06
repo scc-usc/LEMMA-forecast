@@ -56,8 +56,13 @@ quantiles = np.array([0.025, 0.5, 0.975])
 # retro_lookback = np.concatenate((retro_train, retro_test))
 
 #hosp_cumu_s_org= np.loadtxt('data/hosp_cumu_s.csv', delimiter=',')
-hosp_dat = pd.read_csv('data/flu_hosps.csv', delimiter=',').to_numpy()
+hosp_dat = pd.read_csv('data/ts_dat.csv', delimiter=',', header = None).to_numpy()
+hosp_dat_cumu = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1), 1)
+hosp_dat = np.diff(hosp_dat_cumu, axis=1)
+hosp_dat = np.concatenate((hosp_dat[:, 0:1], hosp_dat), axis=1)
+
 hosp_cumu_s_org = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1))
+
 location_dat = pd.read_csv('data/location_dat.csv', delimiter=',')
 popu = location_dat['population'].to_numpy()
 state_abbr = location_dat['location_name'].to_list()
@@ -68,11 +73,11 @@ beta = 1
 
 start_train = 25
 end_train = 32
-retro_lookback = np.array([98, 99, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113])
+retro_lookback = np.array([118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133])
 
 start_test = 33
 end_test = 40
-test_lookback = np.array([105, 104, 103, 99, 98])
+test_lookback = np.array([125, 124, 123, 122, 121, 120, 119, 118])
 
 predictor_progress = 0
 # start_train_list = [29]

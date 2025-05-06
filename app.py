@@ -204,57 +204,6 @@ with st.sidebar.expander("ℹ️ How to configure hyperparameters"):
     - **num_dh_rates_sample**: Number of samples drawn for hospitalization delay rates.
     """)
 
-# # rlags
-# rlags_input = st.sidebar.text_input("rlags (Comma-separated)", ", ".join(map(str, config_param.rlags)))
-# try:
-#     rlags_val = np.array([int(v.strip()) for v in rlags_input.split(",") if v.strip()])
-#     if (rlags_val < 0).any():
-#         st.sidebar.error("❌ rlags cannot have negative values.")
-#     else:
-#         updated_params["rlags"] = rlags_val
-# except ValueError:
-#     st.sidebar.error("❌ Invalid rlags input.")
-
-# # un_list
-# un_list_input = st.sidebar.text_input("un_list (Comma-separated)", ", ".join(map(str, config_param.un_list)))
-# try:
-#     un_list_val = np.array([int(v.strip()) for v in un_list_input.split(",") if v.strip()])
-#     if (un_list_val < 0).any():
-#         st.sidebar.error("❌ un_list cannot have negative values.")
-#     else:
-#         updated_params["un_list"] = un_list_val
-# except ValueError:
-#     st.sidebar.error("❌ Invalid un_list input.")
-
-# # halpha_list
-# halpha_input = st.sidebar.text_input("halpha_list (start,stop,step)", ", ".join(map(str, config_param.halpha_list)))
-# try:
-#     halpha_val = np.array([float(v.strip()) for v in halpha_input.split(",") if v.strip()])
-#     if (halpha_val < 0).any():
-#         st.sidebar.error("❌ halpha_list cannot have negative values.")
-#     else:
-#         updated_params["halpha_list"] = halpha_val
-# except ValueError:
-#     st.sidebar.error("❌ Invalid halpha_list input.")
-
-# # S
-# s_input = st.sidebar.text_input("S (Comma-separated)", ", ".join(map(str, config_param.S)))
-# try:
-#     s_val = [float(v.strip()) for v in s_input.split(",") if v.strip()]
-#     if any(v < 0 for v in s_val):
-#         st.sidebar.error("❌ S cannot contain negative values.")
-#     else:
-#         updated_params["S"] = s_val
-# except ValueError:
-#     st.sidebar.error("❌ Invalid S input.")
-
-# #num_dh_rates_sample 
-# num_dh_input = st.sidebar.number_input(
-#     "num_dh_rates_sample", value=int(config_param.num_dh_rates_sample), min_value=1, step=1
-# )
-# if num_dh_input != config_param.num_dh_rates_sample:
-#     updated_params["num_dh_rates_sample"] = num_dh_input
-
 
 if "train_ranges" not in st.session_state:
     st.session_state.train_ranges = [(params["start_train"], params["end_train"])]
@@ -312,16 +261,23 @@ with left_col:
     hosp_dat_file = st.file_uploader("Upload Target Data (CSV)", type=["csv"])
     if hosp_dat_file:
         hosp_dat = pd.read_csv(hosp_dat_file)
-        hosp_dat.to_csv("data/hosp_dat.csv", index=False)  
-        updated_params["hosp_dat"] = "data/hosp_dat.csv"  
-        st.success("✅ hosp_dat updated!")
+        try:
+            hosp_dat.to_csv("data/ts_dat.csv", index=False, header=False)  
+            updated_params["ts_dat"] = "data/ts_dat.csv"  
+            st.success("✅ Input data updated!")
+            update_config_file(updated_params)
+        except Exception as e:
+            st.error(f"❌ Error loading file: {e}")
 
-    popu_file = st.file_uploader("Upload Population Data (TXT)", type=["txt"])
-    if popu_file:
-        popu = np.loadtxt(popu_file)
-        np.savetxt("data/us_states_population_data.txt", popu)  
-        updated_params["popu"] = "data/us_states_population_data.txt"  
-        st.success("✅ Population data updated!")
+    location_file = st.file_uploader("Upload Location, Population Data (TXT)", type=["txt"])
+    if location_file:
+        location_dat = pd.read_csv(location_file, delimiter=',')
+        popu = location_dat['population'].to_numpy()
+        state_abbr = location_dat['location_name'].to_list()
+        pd.to_csv("data/location_dat.csv", popu)  
+        updated_params["popu"] = popu
+        updated_params["state_abbr"] = state_abbr 
+        st.success("✅ Location data updated!")
 
     st.markdown("---")
     st.markdown("### 🎯 Target Parameters")
@@ -404,10 +360,7 @@ with left_col:
 
 
 with right_col:
-
-    
-
-
+   
 
     st.subheader("📊 Forecast Results")
     if st.button("💾 Save & Run Forecasts", use_container_width=True):
