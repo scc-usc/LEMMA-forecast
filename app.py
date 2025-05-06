@@ -40,48 +40,6 @@ def get_parameters():
     return {attr: getattr(config_param, attr) for attr in dir(config_param) if not attr.startswith("__")}
 
 
-# def update_config_file(updated_keys):
-#     with open(CONFIG_FILE, "r") as f:
-#         lines = f.readlines()
-
-#     new_lines = []
-#     for line in lines:
-#         key = line.split("=")[0].strip()
-#         if key in updated_keys:
-#             value = updated_keys[key]
-#             if key == "hosp_dat":
-#                 formatted_value = f"pd.read_csv('{value}')"
-#             elif key == "popu":
-#                 formatted_value = f"np.loadtxt('{value}')"
-#             elif key == "halpha_list":
-#                 # Special case for halpha_list to preserve np.arange format if possible
-#                 try:
-#                     start = round(float(value[0]), 5)
-#                     step = round(float(value[1] - value[0]), 5)
-#                     stop = round(float(value[-1] + step), 5)
-#                     formatted_value = f"np.arange({start}, {stop}, {step})"
-#                 except Exception:
-#                     # fallback to array if something goes wrong
-#                     formatted_value = f"np.array({value.tolist()})"
-#             elif isinstance(value, np.ndarray):
-#                 formatted_value = f"np.array({value.tolist()})"
-#             elif isinstance(value, list):
-#                 formatted_value = str(value)
-#             elif isinstance(value, str):
-#                 formatted_value = f'"{value}"'
-#             else:
-#                 formatted_value = value
-
-#             new_lines.append(f"{key} = {formatted_value}\n")
-#         else:
-#             new_lines.append(line)
-
-#     with open(CONFIG_FILE, "w") as f:
-#         f.writelines(new_lines)
-
-#     importlib.reload(config_param)
-
-
 # FOR ADDING PARAMETERS THAT DO NOT EXIST IN THE CONFIG FILE
 def update_config_file(updated_keys):
     with open(CONFIG_FILE, "r") as f:
@@ -155,10 +113,15 @@ def update_config_file(updated_keys):
 
         new_lines.append(f"{key} = {formatted_value}\n")
 
-    with open(CONFIG_FILE, "w") as f:
-        f.writelines(new_lines)
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            f.writelines(new_lines)
 
-    importlib.reload(config_param)
+        importlib.reload(config_param)
+    except Exception as e:
+        st.error(f"❌ Error updating config file: {e}")
+        return
+
 
 
 
@@ -486,8 +449,7 @@ with right_col:
             else:
                 st.error("❌ Please run the initial forecast generation first.")
 
-    with open('data/us_states_abbr_list.txt', 'r') as f:
-        state_abbr = [line.strip() for line in f if line.strip()]
+    state_abbr = config_param.state_abbr
     
     state_select = st.selectbox("Select State", state_abbr)
     cid = state_abbr.index(state_select)    

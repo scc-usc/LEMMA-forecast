@@ -2,8 +2,7 @@ import numpy as np
 from datetime import datetime
 
 import pandas as pd
-import config_model
-import shared_utils.utils
+
 ############################
 # offset = 11
 zero_date = datetime(2021, 9, 1)
@@ -17,6 +16,11 @@ num_dh_rates_sample = 1
 season_start = datetime(2023, 9, 30)
 season_end = zero_date
 season_start_day = (season_start - season_end).days
+
+##############################
+import config_model
+import shared_utils.utils
+import preprocess.util_function as pp
 
 ##############################
 rlags = np.array([0])
@@ -51,12 +55,12 @@ quantiles = np.array([0.025, 0.5, 0.975])
 # retro_train, retro_test  = range[:split], range[split:]
 # retro_lookback = np.concatenate((retro_train, retro_test))
 
-hosp_cumu_s_org= np.loadtxt('data/hosp_cumu_s.csv', delimiter=',')
-
-hosp_dat = pd.read_csv('data/hosp_dat.csv', delimiter=',').to_numpy()
-
-
-popu = np.loadtxt('data/us_states_population_data.txt')
+#hosp_cumu_s_org= np.loadtxt('data/hosp_cumu_s.csv', delimiter=',')
+hosp_dat = pd.read_csv('data/flu_hosps.csv', delimiter=',').to_numpy()
+hosp_cumu_s_org = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1))
+location_dat = pd.read_csv('data/location_dat.csv', delimiter=',')
+popu = location_dat['population'].to_numpy()
+state_abbr = location_dat['location_name'].to_list()
 
 alpha = 1
 beta = 1
@@ -64,11 +68,11 @@ beta = 1
 
 start_train = 25
 end_train = 32
-retro_lookback = np.array([101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113])
+retro_lookback = np.array([98, 99, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113])
 
 start_test = 33
 end_test = 40
-test_lookback = np.array([105, 104, 103, 102, 101])
+test_lookback = np.array([105, 104, 103, 99, 98])
 
 predictor_progress = 0
 # start_train_list = [29]

@@ -30,7 +30,7 @@ def hampel_filter_forloop(input_series, window_size=15, n_sigmas=4):
     return new_series, indices
 
 
-def smooth_epidata(data_4, smooth_factor=14, week_correction=1, week_smoothing=1):
+def smooth_epidata(data_4, smooth_factor=14, week_correction=0, week_smoothing=0):
     if smooth_factor <= 0:
         return data_4
 
