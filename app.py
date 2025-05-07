@@ -260,7 +260,7 @@ with left_col:
     st.markdown("### 📂 Input Files (Source Files)")
     hosp_dat_file = st.file_uploader("Upload Target Data (CSV)", type=["csv"])
     if hosp_dat_file:
-        hosp_dat = pd.read_csv(hosp_dat_file)
+        hosp_dat = pd.read_csv(hosp_dat_file, header=None)
         try:
             hosp_dat.to_csv("data/ts_dat.csv", index=False, header=False)  
             updated_params["ts_dat"] = "data/ts_dat.csv"  
@@ -295,7 +295,7 @@ with left_col:
     test_lookback = [maxTbinned - i for i in test_days]
     retro_lookback = sorted(set(train_lookback + test_lookback))
 
-    print(retro_lookback)
+    #print(retro_lookback)
 
     updated_params["retro_lookback"] = np.array(retro_lookback)
     updated_params["test_lookback"] = np.array(test_lookback)
@@ -417,7 +417,7 @@ with right_col:
 
     # Add observed data trace
     fig.add_trace(go.Scatter(
-        x=list(range(len(observed_data))),
+        x=list(range(0, len(observed_data))),
         y=observed_data,
         mode='lines',
         name='Observed'
@@ -453,7 +453,7 @@ with right_col:
         #maxt = hosp_dat.shape[1]
         #ax.plot(bin_array(np.diff(config_param.hosp_cumu_s_org[cid, :]), 0, config_param.bin_size, 0), label="Observed")
         pred_start = (maxt - test_lookback * config_param.bin_size)
-        tt = np.arange(1 + pred_start // config_param.bin_size, pred_start // config_param.bin_size + config_param.weeks_ahead + 1)
+        tt = np.arange(2 + pred_start // config_param.bin_size, pred_start // config_param.bin_size + config_param.weeks_ahead + 2)
 
 
         if (test_lookback, cid) in preds:

@@ -213,7 +213,3 @@ def pmf_class(model, X, wk):
         pmf[:, i] = np.mean(classifications == classification, axis=1)
 
     return pmf
-
-
-
-

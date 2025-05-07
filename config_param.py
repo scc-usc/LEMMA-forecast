@@ -22,7 +22,7 @@ import config_model
 import shared_utils.utils
 import preprocess.util_function as pp
 
-##############################
+############ Model Hyperparams ##################
 rlags = np.array([0])
 rlag_list = np.arange(1, len(rlags) + 1)
 un_list = np.array([100.0])
@@ -57,37 +57,29 @@ quantiles = np.array([0.025, 0.5, 0.975])
 
 #hosp_cumu_s_org= np.loadtxt('data/hosp_cumu_s.csv', delimiter=',')
 hosp_dat = pd.read_csv('data/ts_dat.csv', delimiter=',', header = None).to_numpy()
-hosp_dat_cumu = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1), 1)
-hosp_dat = np.diff(hosp_dat_cumu, axis=1)
-hosp_dat = np.concatenate((hosp_dat[:, 0:1], hosp_dat), axis=1)
-
-hosp_cumu_s_org = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1))
 
 location_dat = pd.read_csv('data/location_dat.csv', delimiter=',')
-popu = location_dat['population'].to_numpy()
-state_abbr = location_dat['location_name'].to_list()
+
 
 alpha = 1
 beta = 1
 
 
-start_train = 25
-end_train = 32
-retro_lookback = np.array([118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133])
+start_train = 28
+end_train = 34
+retro_lookback = np.array([120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130])
 
-start_test = 33
-end_test = 40
-test_lookback = np.array([125, 124, 123, 122, 121, 120, 119, 118])
+start_test = 35
+end_test = 38
+test_lookback = np.array([123, 122, 121, 120])
 
 predictor_progress = 0
-# start_train_list = [29]
-# start_test_list = [29]
-# end_train_list = [33]
-# end_test_list = [32]
-# retro_lookback = np.concatenate([np.arange(s, e + 1) for s, e in zip(start_train_list, end_train_list)])
-# test_lookback = np.concatenate([np.arange(s, e + 1) for s, e in zip(start_test_list, end_test_list)])
 
+ts_dat = "data/ts_dat.csv"
+hosp_dat_cumu = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1), 1)
+hosp_dat = np.diff(hosp_dat_cumu, axis=1)
+hosp_dat = np.concatenate((hosp_dat[:, 0:1], hosp_dat), axis=1)
+hosp_cumu_s_org = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1))
 
-
-# retro_lookback = np.array([29, 30, 31, 32, 33, 41, 42, 43, 44, 45])
-# test_lookback = np.array([30, 31, 32, 41, 42, 43])
+popu = location_dat['population'].to_numpy()
+state_abbr = location_dat['location_name'].to_list()
