@@ -67,11 +67,11 @@ beta = 1
 
 start_train = 28
 end_train = 34
-retro_lookback = np.array([120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130])
+retro_lookback = np.array([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110])
 
 start_test = 35
 end_test = 38
-test_lookback = np.array([123, 122, 121, 120])
+test_lookback = np.array([103, 102, 101, 100])
 
 predictor_progress = 0
 
