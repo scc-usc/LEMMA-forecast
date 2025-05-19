@@ -430,28 +430,22 @@ with right_col:
         template="plotly_white"
     )
 
-    # print(cid)
     if st.session_state.get("forecast_ready"):
         all_preds = st.session_state["all_preds"]
         preds = st.session_state["preds"]
 
         #cid represents the state
-        # cid = 2
         
         #x represents the lookback for which we are going to generate the predictions
-        # x = 22
         dd = st.selectbox(
             "Select Forecast Day",
             options=[maxTbinned-i for i in list(config_param.test_lookback)],
             index=len(config_param.test_lookback) - 1
         )
         x = maxTbinned - dd
-        #fig, ax = plt.subplots()
         
         ## Specify a range of final predictions
         test_lookback = x
-        #maxt = hosp_dat.shape[1]
-        #ax.plot(bin_array(np.diff(config_param.hosp_cumu_s_org[cid, :]), 0, config_param.bin_size, 0), label="Observed")
         pred_start = (maxt - test_lookback * config_param.bin_size)
         tt = np.arange(2 + pred_start // config_param.bin_size, pred_start // config_param.bin_size + config_param.weeks_ahead + 2)
 
@@ -475,4 +469,3 @@ with right_col:
 
     # Render the Plotly chart
     st.plotly_chart(fig, use_container_width=True)
-
