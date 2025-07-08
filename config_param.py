@@ -25,7 +25,7 @@ import preprocess.util_function as pp
 ############ Model Hyperparams ##################
 rlags = np.array([0])
 rlag_list = np.arange(1, len(rlags) + 1)
-un_list = np.array([100.0])
+un_list = np.array([50.0])
 halpha_list = np.arange(0.98, 0.92, -0.02)
 S = np.array([0.0])
 hyperparams_lists = [halpha_list, rlag_list, un_list, S]
@@ -58,7 +58,7 @@ quantiles = np.array([0.025, 0.5, 0.975])
 #hosp_cumu_s_org= np.loadtxt('data/hosp_cumu_s.csv', delimiter=',')
 hosp_dat = pd.read_csv('data/ts_dat.csv', delimiter=',', header = None).to_numpy()
 
-location_dat = pd.read_csv('data/location_dat.csv', delimiter=',')
+location_dat = pd.read_csv("data/location_dat.csv", delimiter=',')
 
 
 alpha = 1
@@ -67,11 +67,11 @@ beta = 1
 
 start_train = 28
 end_train = 34
-retro_lookback = np.array([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110])
+retro_lookback = np.array([78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108])
 
 start_test = 35
 end_test = 38
-test_lookback = np.array([103, 102, 101, 100])
+test_lookback = np.array([83, 82, 81, 80, 79, 78])
 
 predictor_progress = 0
 
