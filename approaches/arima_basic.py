@@ -45,14 +45,34 @@ def _difference(series: np.ndarray, d: int) -> np.ndarray:
 
 
 def _invert_difference(last_values: np.ndarray, diffs: np.ndarray, d: int) -> np.ndarray:
-    # last_values should include the last 'd' values of the original series
+    """Invert d-th order differencing for a 1D forecast sequence.
+    last_values: shape (d,), the last d values of the original increment series (z^(0)).
+    diffs: shape (H,), the forecast sequence in the d-th differenced space (z^(d)).
+    Returns: shape (H,), the forecast in the original increment space.
+    """
     if d <= 0:
         return diffs
+    # Ensure 1D inputs
+    last_values = np.asarray(last_values).ravel()
+    diffs = np.asarray(diffs).ravel()
+
+    # Compute the last observed values for all lower-order differences at time t
+    # levels[k] holds z^(k)_t for k = 0..d-1
+    levels = []
+    tmp = last_values.copy()
+    for _k in range(d):
+        if tmp.size == 0:
+            levels.append(0.0)
+            tmp = np.array([])
+        else:
+            levels.append(float(tmp[-1]))
+            tmp = np.diff(tmp)
+
+    # Iteratively integrate from order d to 0
     out = diffs.copy()
-    prev = last_values.copy()
-    for _ in range(d):
-        out = np.cumsum(out, axis=-1) + prev[:, None]
-        prev = out[:, -1]
+    for j in range(d - 1, -1, -1):
+        init = levels[j]
+        out = np.cumsum(out) + init
     return out
 
 
@@ -106,7 +126,7 @@ def process_scenario(args, hosp_cumu_s, hosp_cumu, popu, config_params, base_hos
         # Invert differencing back to original increment space
         if d > 0:
             last_vals = series[-d:]
-            inc_pred = _invert_difference(last_vals[None, :], fx[None, :], d=d)[0]
+            inc_pred = _invert_difference(last_vals, fx, d=d)
         else:
             inc_pred = fx
         preds_inc[cid] = inc_pred

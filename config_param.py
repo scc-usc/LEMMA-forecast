@@ -37,8 +37,8 @@ hjp = 7
 
 # Approach-specific hyperparameters (defaults so scripts can run without UI)
 # ARIMA(p,d,0): p in ar_p_list, d in d_list
-ar_p_list = np.array([1.0, 7.0])
-d_list = np.array([0.0, 1.0])
+ar_p_list = np.array([7.0, 14.0])
+d_list = np.array([0.0, 1.0, 2.0])
 
 # Flatline: use daily increment at t-k
 # If already defined later, this serves as default; keep as np.array-compatible
