@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import config_param
+from approaches import get_approach
 from process_scenario import *
 from math import ceil
 from preprocess.util_function import smooth_epidata
@@ -37,14 +38,13 @@ def generate_predictors(hosp_cumu_s_org, hosp_dat, popu, config_param, retro_loo
             hosp_cumu = hosp_cumu[:, :-(wks_back*config_param.bin_size)]
         
         
-        scen_list = []
-        for scenario in product(*config_param.hyperparams_lists):
-            scen_list.append(list(scenario))
-
-        scen_list = np.array(scen_list)
+        # Build scenarios using the selected approach
+        approach_name = getattr(config_param, "selected_approach", "SIKJalpha Basic")
+        approach = get_approach(approach_name)
+        scen_list = approach.build_scenarios(config_param)
         
-        net_hosp_A = np.empty((len(scen_list)*config_param.num_dh_rates_sample, ns, config_param.horizon))
-
+        # One aggregate per scenario; approaches handle any internal sampling and we take mean
+        net_hosp_A = np.empty((len(scen_list), ns, config_param.horizon))
         net_hosp_A[:] = np.nan
         
         net_h_cell = [None] * len(scen_list)  
@@ -52,14 +52,8 @@ def generate_predictors(hosp_cumu_s_org, hosp_dat, popu, config_param, retro_loo
         base_hosp = hosp_cumu[:, T_full-1]
 
 
-        # Create a dictionary with only the necessary config parameters
-        config_params = {
-            'num_dh_rates_sample': config_param.num_dh_rates_sample,
-            'horizon': config_param.horizon,
-            'rlags': config_param.rlags,
-            'hk': config_param.hk,
-            'hjp': config_param.hjp
-        }
+        # Let the approach declare its required configuration
+        config_params = approach.make_config(config_param)
         
         # Create a list of tasks, each task is a tuple (simnum, scenario)
         tasks = [(simnum, scen_list[simnum]) for simnum in range(scen_list.shape[0])]
@@ -87,8 +81,8 @@ def generate_predictors(hosp_cumu_s_org, hosp_dat, popu, config_param, retro_loo
         
         for simnum in range(scen_list.shape[0]):
             net_hosp_A[simnum , :, :] = np.nanmean(net_h_cell[simnum], axis=0)
-        indd = int(config_param.npredictors/config_param.num_dh_rates_sample)
-        p = np.squeeze(net_hosp_A[0:indd, :, :])
+        # Use all scenarios produced by the selected approach; keep 3D shape
+        p = net_hosp_A  # shape: (n_predictors, n_locations, horizon)
         predictors = np.diff(p, axis=2)
         lo = predictors[:, :, 0:config_param.weeks_ahead*config_param.bin_size]
         all_preds[x] = lo
