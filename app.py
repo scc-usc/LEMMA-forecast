@@ -11,8 +11,7 @@ import sys
 import os
 #sys.path.append('~/code/lemma-repo/LEMMA')
 from shared_utils.utils import bin_array
-from input_models import model_config
-from approaches import get_approach
+from approaches import get_approach, approaches as model_config_approaches
 if "forecast_ready" not in st.session_state:
     st.session_state["forecast_ready"] = False
 
@@ -151,7 +150,7 @@ updated_params = {}
 st.sidebar.header("🔬 Predictor Settings")
 st.sidebar.markdown("### 🔧 Approach Selection")
 
-approach_options = list(getattr(model_config, "approaches", {"SIKJalpha Basic": []}).keys())
+approach_options = list(model_config_approaches.keys())
 selected_approach_label = st.sidebar.selectbox("Approach", approach_options)
 
 # Persist and write to config so back-end uses it
@@ -161,7 +160,7 @@ st.markdown("---")
 
 st.sidebar.markdown("### 🔧 Hyperparameters")
 
-model_hyperparams = model_config.approaches.get(selected_approach_label, [])
+model_hyperparams = model_config_approaches.get(selected_approach_label, [])
 
 for param in model_hyperparams:
     default = None

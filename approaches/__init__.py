@@ -10,6 +10,14 @@ _REGISTRY = {
     "Flatline": "approaches.flatline",
 }
 
+# Unified approach registry for the UI (approach -> list of hyperparameter names)
+# Moved from input_models/model_config.py
+approaches = {
+    "SIKJalpha Basic": ["halpha_list", "rlag_list", "un_list", "S"],
+    "ARIMA": ["ar_p_list", "d_list"],
+    "Flatline": ["flat_k_list"],
+}
+
 
 def get_approach(name: str):
     key = name or "SIKJalpha_basic"
