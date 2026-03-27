@@ -1,6 +1,16 @@
 # LEMMA: A Lightweight Epidemic Modeling and Analytics tool for Forecasting
 
-LEMMA is designed to streamline and automate the process of generating quick time-series forecasts for infectious diseases. This codebase provides tools and utilities for data preprocessing, model training, and forecast generation. By default, it generates some intermediate forecasts, learns from their mistakes, and then generates the final forecasts.
+
+LEMMA is a lightweight, user-friendly tool for generating time-series forecasts for infectious diseases. It supports both a web interface and a command-line interface (CLI), with robust, data-driven defaults for all key settings. LEMMA outputs forecasts in the Hubverse quantile format and is designed for ease of use, flexibility, and reproducibility.
+
+**Key Features:**
+- Dynamic, data-driven defaults for training and forecast windows (no manual tuning required)
+- User-facing configuration in terms of dates and bins (not internal indices)
+- ARIMA is the default model (with other models available)
+- Hubverse-compatible quantile output format
+- Robust handling of missing data and edge cases
+- Streamlit web UI and CLI support
+
 To get access to the web interface for producing forecasts, please contact ajiteshs@usc.edu.
 
 ## Web Interface
@@ -22,17 +32,17 @@ The web interface is designed to be user-friendly and intuitive, making it acces
 
 - **Set Forecast Target Configurations**:
 In the 🎯 Target Parameters section: <br>
-	- **Training steps**: Time-steps on which LEMMA should run the "intermediate" forecasting models and learn from their mistakes. 
-	- **Forecasting steps**: Time-steps at which forecasts are desired. For prospective forecast, the forecastign step will be the last time step.
-	- **weeks ahead (bins ahead)**: Number of bins (e.g., weeks) in the forecast horizon.
-	- **bin size**: Number of time-steps in one bin. For instance, the input file may have a daily time-series, but we may want forecast at weekly level. Then ```bin size = 7```.
+    - **Training window**: Select the start and end dates for model training. If left blank, LEMMA will automatically choose a robust default window based on your data and forecast horizon.
+    - **Forecast window**: Select the start and end dates for forecast generation. If left blank, LEMMA will use the last available data date as the last possible forecast origin.
+    - **Weeks ahead (bins ahead)**: Number of bins (e.g., weeks) in the forecast horizon.
+    - **Bin size**: Number of time-steps in one bin. For example, if your data is daily but you want weekly forecasts, set `bin size = 7`.
  
 - **Select Forecasting Models**:
-    The User can open the Sidebar and select the desired "intermediate" forecasting model from the list of available models.    The app will display the selected model's hyperparameters and allow the user to adjust them as needed.  For now, only the [SIkJalpha model](https://www.sciencedirect.com/science/article/pii/S1755436523000658) is provided.
+    The User can open the Sidebar and select the desired forecasting model. By default, Flatline is selected, but other models (such as ARIMA and SIkJalpha) are available. The app will display the selected model's hyperparameters and allow the user to adjust them as needed.
     
 - **Generate Forecasts**:
     In the 📊 Forecast Results section: <br>
-    - Click the "💾 Save & Run Forecasts" button to to save the updated configuration and generate forecasts. (Known bug: Sometimes, an error is displayed which goes away on second click)
+    - Click the "💾 Save & Run Forecasts" button to save the updated configuration and generate forecasts.
     - A progress bar will display the status of the forecast generation. 
     
 - **View and Analyze Results**:
@@ -41,7 +51,7 @@ In the 🎯 Target Parameters section: <br>
     - The app will display a chart showing:
         - Observed data.
         - Predicted data with quantiles.
-    - Use the **Download All Forecasts (CSV)** button to export all generated forecasts.
+    - Use the **Download All Forecasts (CSV)** button to export all generated forecasts in Hubverse quantile format.
 - **Re-run Predictions**:
     - If you change the desired quantiles, click the "Re-run Predictions" button to re-run the predictions with the updated configuration.
     - The app will display a success message once the predictions are completed.
@@ -54,14 +64,13 @@ In the 🎯 Target Parameters section: <br>
    ```
 2. Run the Streamlit app:
    ```bash
-    streamlit run app.py
-    ```
+   streamlit run app.py
+   ```
 3. Streamlit will generate URLs on which the interface is served.
 
-## Running from Command Line
+## Running from Command Line (CLI)
 
-You can generate forecasts without Streamlit and save all prediction results to a file.
-The CLI is config-driven and reads all settings from `config_param.py`.
+You can generate forecasts without Streamlit and save all prediction results to a file. The CLI is config-driven and reads all settings from `user_config.py` and `config_param.py`.
 
 1. Install dependencies:
     ```bash
@@ -72,66 +81,58 @@ The CLI is config-driven and reads all settings from `config_param.py`.
     python main.py
     ```
 
-CLI forecast settings in `config_param.py`:
+**CLI forecast settings:**
+- All forecast settings (including training/forecast windows, bins, and model selection) are controlled in `user_config.py`.
+- If you leave the training or forecast window dates as `None`, LEMMA will automatically select robust, data-driven defaults based on your data and forecast horizon. This ensures the CLI works out-of-the-box for most datasets.
+- Output location and format are set by `forecast_output_path` and `forecast_output_format` in `user_config.py`.
 
-- `cli_output_path`
-- `cli_output_format`
-- `ensemble_method`
+**Output format:**
+Forecasts are saved in the Hubverse quantile format, with columns: `origin_date`, `horizon`, `location`, `output_type`, `output_type_id`, `value`.
+
 
 ## Configuration Guide
 
-The project configuration is centralized in `user_config.py`.
+All user-facing configuration is in `user_config.py`.
 
-Primary settings to edit:
+**Primary settings to edit:**
+- **Time/binning:** `timesteps_per_bin`, `bins_ahead`
+- **Forecast model:** `predictor_approach` (default: Flatline), approach hyperparameters (e.g., `arima_autoregressive_orders`)
+- **Target windows:** `training_window_start_date`, `training_window_end_date`, `forecast_window_start_date`, `forecast_window_end_date` (set to `None` for dynamic, data-driven defaults)
+- **Quantiles:** `quantiles` (default: [0.0, 0.5, 1.0])
+- **Ensemble:** `ensemble_method` (default: Random Forest)
+- **Data paths:** `target_data_path`, `location_metadata_path`
+- **CLI export:** `forecast_output_path`, `forecast_output_format`
 
-- Time/binning: `timesteps_per_bin`, `bins_ahead`
-- Forecast model: `predictor_approach`, approach hyperparameters (for example `arima_autoregressive_orders`, `arima_differencing_orders`)
-- Target windows: `training_window_start_date`, `training_window_end_date`, `forecast_window_start_date`, `forecast_window_end_date`
-- Quantiles: `quantiles`
-- Ensemble: `ensemble_method`
-- Data paths: `target_data_path`, `location_metadata_path`
-- CLI export: `forecast_output_path`, `forecast_output_format`
-
-Derived/internal values (normally do not edit):
-
+**Derived/internal values (normally do not edit):**
 - `retro_lookback`, `test_lookback` (auto-built from the train/test range settings unless explicit overrides are set)
 - `npredictors`, `horizon`
 - Processed arrays: `hosp_dat`, `hosp_cumu_s_org`, `popu`, `state_abbr`
 
-Validation helper:
-
+**Validation helper:**
 - `validate_config()` in `config_param.py` returns a list of detected config issues.
 
-Output columns:
-
-- `origin_date`: Forecast origin date derived from reference date and lookback
+**Output columns (Hubverse quantile format):**
+- `origin_date`: Forecast origin date (date of forecast)
 - `horizon`: Forecast horizon bin (1..forecast_horizon_bins)
 - `location`: Location identifier (location name)
 - `output_type`: Always `quantile`
-- `output_type_id`: Quantile level (for example 0.1, 0.5, 0.9)
+- `output_type_id`: Quantile level (e.g., 0.1, 0.5, 0.9)
 - `value`: Predicted value
 
 
     
+
 ## How to Add New Models (beta)
 To add new models to the LEMMA project, follow these steps:
-1. **Place your new model.py file in the input_models Folder**
-2. **Define the Model's Parameters** <br> Inside the new model file, define the required parameters and functions
-3. **Update model_config.py**
-Open the *model_config.py* file in the input_models folder.
-Add your new model to the estimation_models or simulation_models dictionary and define its parameters.
-4. **Integrate the Model in the Streamlit App**
-Open the app.py file.
-Ensure the new model appears in the dropdowns for Estimation Model and Simulation Model:    
-```python
-est_model = st.sidebar.selectbox("Estimation Model", list(model_config.estimation_models.keys()))
-sim_model = st.sidebar.selectbox("Simulation Model", list(model_config.simulation_models.keys()))
-```
-5. **Replace the function call in *process_scenario.py***
-6. **Test the Model** <br> Run the Streamlit app and test 
-```python
-streamlit run app.py
-```
+1. **Place your new model.py file in the approaches/ folder**
+2. **Define the Model's Parameters**: Inside the new model file, define the required parameters and functions
+3. **Update config_param.py**: Register your new model in the model selection logic
+4. **Integrate the Model in the Streamlit App**: Open app.py and ensure the new model appears in the dropdown for model selection
+5. **Replace the function call in process_scenario.py** if needed
+6. **Test the Model**: Run the Streamlit app and test
+    ```bash
+    streamlit run app.py
+    ```
 
 ## Files
 - **app.py**: The main entry point for the Streamlit web application. It handles user interactions, file uploads, and model selection.

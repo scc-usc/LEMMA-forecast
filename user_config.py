@@ -41,10 +41,10 @@ location_metadata_path = "data/location_dat.csv"
 # - training start: 10 bins before last trainable bin (or first date)
 # - training end: last trainable bin given bins_ahead
 # - forecast start/end: last available origin date
-training_window_start_date = "2024-01-10"
-training_window_end_date = "2024-03-20"
-forecast_window_start_date = "2024-04-17"
-forecast_window_end_date = "2024-04-17"
+training_window_start_date = None
+training_window_end_date = None
+forecast_window_start_date = None
+forecast_window_end_date = None
 
 # CLI export settings.
 forecast_output_path = "outputs/predictions.csv"
