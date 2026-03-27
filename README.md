@@ -41,6 +41,7 @@ In the 🎯 Target Parameters section: <br>
     - The app will display a chart showing:
         - Observed data.
         - Predicted data with quantiles.
+    - Use the **Download All Forecasts (CSV)** button to export all generated forecasts.
 - **Re-run Predictions**:
     - If you change the desired quantiles, click the "Re-run Predictions" button to re-run the predictions with the updated configuration.
     - The app will display a success message once the predictions are completed.
@@ -56,6 +57,59 @@ In the 🎯 Target Parameters section: <br>
     streamlit run app.py
     ```
 3. Streamlit will generate URLs on which the interface is served.
+
+## Running from Command Line
+
+You can generate forecasts without Streamlit and save all prediction results to a file.
+The CLI is config-driven and reads all settings from `config_param.py`.
+
+1. Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2. Run CLI forecasting:
+    ```bash
+    python main.py
+    ```
+
+CLI forecast settings in `config_param.py`:
+
+- `cli_output_path`
+- `cli_output_format`
+- `ensemble_method`
+
+## Configuration Guide
+
+The project configuration is centralized in `user_config.py`.
+
+Primary settings to edit:
+
+- Time/binning: `timesteps_per_bin`, `bins_ahead`
+- Forecast model: `predictor_approach`, approach hyperparameters (for example `arima_autoregressive_orders`, `arima_differencing_orders`)
+- Target windows: `training_window_start_date`, `training_window_end_date`, `forecast_window_start_date`, `forecast_window_end_date`
+- Quantiles: `quantiles`
+- Ensemble: `ensemble_method`
+- Data paths: `target_data_path`, `location_metadata_path`
+- CLI export: `forecast_output_path`, `forecast_output_format`
+
+Derived/internal values (normally do not edit):
+
+- `retro_lookback`, `test_lookback` (auto-built from the train/test range settings unless explicit overrides are set)
+- `npredictors`, `horizon`
+- Processed arrays: `hosp_dat`, `hosp_cumu_s_org`, `popu`, `state_abbr`
+
+Validation helper:
+
+- `validate_config()` in `config_param.py` returns a list of detected config issues.
+
+Output columns:
+
+- `origin_date`: Forecast origin date derived from reference date and lookback
+- `horizon`: Forecast horizon bin (1..forecast_horizon_bins)
+- `location`: Location identifier (location name)
+- `output_type`: Always `quantile`
+- `output_type_id`: Quantile level (for example 0.1, 0.5, 0.9)
+- `value`: Predicted value
 
 
     

@@ -111,6 +111,9 @@ def generate_predictors(hosp_cumu_s_org, hosp_dat, popu, config_param, retro_loo
                 lo = predictors[:, :, 0 : config_param.weeks_ahead * config_param.bin_size]
                 all_preds[x] = lo
 
-                print(f"Done for lookback {x}. {len(finished_x)}/{len(retro_lookback)} completed.")
+                print(
+                    f"Completed forecast window "
+                    f"({len(finished_x)}/{len(retro_lookback)} ready)."
+                )
 
     return all_preds

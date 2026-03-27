@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import sys
 import os
+from datetime import timedelta
 #sys.path.append('~/code/lemma-repo/LEMMA')
 from shared_utils.utils import bin_array
 from approaches import get_approach, approaches as model_config_approaches
@@ -17,9 +18,29 @@ if "forecast_ready" not in st.session_state:
 
 st.set_page_config(initial_sidebar_state= "collapsed", layout="wide", page_title="Forecast Generator", page_icon="💡")
 
-CONFIG_FILE = "config_param.py"
+CONFIG_FILE = "user_config.py"
+
+CONFIG_KEY_MAP = {
+    "selected_approach": "predictor_approach",
+    "weeks_ahead": "bins_ahead",
+    "bin_size": "timesteps_per_bin",
+    "start_train": "training_window_start_bin",
+    "end_train": "training_window_end_bin",
+    "start_test": "forecast_window_start_bin",
+    "end_test": "forecast_window_end_bin",
+    "ts_dat": "target_data_path",
+    "location_dat_path": "location_metadata_path",
+    "ar_p_list": "arima_autoregressive_orders",
+    "d_list": "arima_differencing_orders",
+    "flat_k_list": "flatline_lag_timesteps",
+    "rlag_list": "retro_lag_bins",
+}
 
 EDITABLE_PARAMS = ["weeks_ahead", "bin_size", "start_train", "end_train", "start_test", "end_test", "quantiles"]
+DISPLAY_PARAM_NAMES = {
+    "weeks_ahead": "bins_ahead",
+    "bin_size": "timesteps_per_bin",
+}
 
 # EDITABLE_PARAMS = PARAMS + hyper_params
 st.markdown("👈 **Open the sidebar to update predictors**")
@@ -41,8 +62,66 @@ def get_parameters():
     return {attr: getattr(config_param, attr) for attr in dir(config_param) if not attr.startswith("__")}
 
 
+def _timedelta_from_timesteps(num_steps):
+    unit = str(getattr(config_param, "base_time_step_unit", "day")).lower().strip()
+    if unit in {"day", "days", "d"}:
+        return timedelta(days=int(num_steps))
+    if unit in {"week", "weeks", "w"}:
+        return timedelta(weeks=int(num_steps))
+    return timedelta(days=int(num_steps))
+
+
+def _timedelta_from_bins(num_bins):
+    return _timedelta_from_timesteps(int(num_bins) * int(config_param.bin_size))
+
+
+def _steps_between_dates(start_ts, end_ts):
+    delta_days = (pd.Timestamp(end_ts) - pd.Timestamp(start_ts)).days
+    unit = str(getattr(config_param, "base_time_step_unit", "day")).lower().strip()
+    if unit in {"day", "days", "d"}:
+        return int(delta_days)
+    if unit in {"week", "weeks", "w"}:
+        return int(delta_days // 7)
+    return int(delta_days)
+
+
+def _date_to_bin_index(date_value, reference_date, max_bin_idx):
+    steps = _steps_between_dates(reference_date, pd.Timestamp(date_value))
+    bin_idx = int(steps // int(config_param.bin_size))
+    return int(np.clip(bin_idx, 0, max_bin_idx))
+
+
+def validate_window_bins(train_start_bin, train_end_bin, forecast_start_bin, forecast_end_bin):
+    errors = []
+    if train_end_bin < train_start_bin:
+        errors.append("Training End Date must be on or after Training Start Date.")
+    if forecast_end_bin < forecast_start_bin:
+        errors.append("Forecast End Date must be on or after Forecast Start Date.")
+    return errors
+
+
+def reload_runtime_config():
+    """Reload user-facing and derived config modules so changes apply immediately."""
+    importlib.invalidate_caches()
+
+    if "user_config" in sys.modules:
+        importlib.reload(sys.modules["user_config"])
+    else:
+        importlib.import_module("user_config")
+
+    global config_param
+    if "config_param" in sys.modules:
+        config_param = importlib.reload(sys.modules["config_param"])
+    else:
+        config_param = importlib.import_module("config_param")
+
+
 # FOR ADDING PARAMETERS THAT DO NOT EXIST IN THE CONFIG FILE
 def update_config_file(updated_keys):
+    mapped_updates = {
+        CONFIG_KEY_MAP.get(key, key): value for key, value in updated_keys.items()
+    }
+
     with open(CONFIG_FILE, "r") as f:
         lines = f.readlines()
 
@@ -56,8 +135,8 @@ def update_config_file(updated_keys):
 
         key = line.split("=")[0].strip()
 
-        if key in updated_keys:
-            value = updated_keys[key]
+        if key in mapped_updates:
+            value = mapped_updates[key]
             found_keys.add(key)
         else:
             new_lines.append(line)
@@ -90,8 +169,8 @@ def update_config_file(updated_keys):
         new_lines.append(f"{key} = {formatted_value}\n")
 
     # Add any missing (new) keys
-    for key in updated_keys.keys() - found_keys:
-        value = updated_keys[key]
+    for key in mapped_updates.keys() - found_keys:
+        value = mapped_updates[key]
 
         if key == "hosp_dat":
             formatted_value = f"pd.read_csv('{value}')"
@@ -118,27 +197,13 @@ def update_config_file(updated_keys):
 
         new_lines.append(f"{key} = {formatted_value}\n")
 
-    try:
-        # Atomic write to avoid partial file reads during reload
-        tmp_path = CONFIG_FILE + ".tmp"
-        with open(tmp_path, "w") as f:
-            f.writelines(new_lines)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, CONFIG_FILE)
-
-        # Robust reload: invalidate caches, then reload or import fresh
-        importlib.invalidate_caches()
-        global config_param
-        if 'config_param' in sys.modules:
-            config_param = importlib.reload(sys.modules['config_param'])
-        else:
-            config_param = importlib.import_module('config_param')
-    except Exception as e:
-        # Avoid noisy failures if UI is mid-rerun; apply on next run
-        st.warning("Config updated. Changes will apply on the next run.")
-        st.info(f"Details: {e}")
-        return
+    # Atomic write to avoid partial writes.
+    tmp_path = CONFIG_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
+        f.writelines(new_lines)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, CONFIG_FILE)
 
 
 
@@ -151,7 +216,10 @@ st.sidebar.header("🔬 Predictor Settings")
 st.sidebar.markdown("### 🔧 Approach Selection")
 
 approach_options = list(model_config_approaches.keys())
-selected_approach_label = st.sidebar.selectbox("Approach", approach_options)
+config_approach = getattr(config_param, "selected_approach", "ARIMA")
+default_approach = config_approach if config_approach in approach_options else "ARIMA"
+default_approach_index = approach_options.index(default_approach) if default_approach in approach_options else 0
+selected_approach_label = st.sidebar.selectbox("Approach", approach_options, index=default_approach_index)
 
 # Persist and write to config so back-end uses it
 st.session_state["selected_approach"] = selected_approach_label
@@ -296,9 +364,9 @@ with left_col:
         try:
             location_dat = pd.read_csv(location_file, delimiter=',')
             location_dat.to_csv("data/location_dat.csv", index=False)  
-            
-            # Force reload the config to pick up the new data
-            importlib.reload(config_param)
+            updated_params["location_dat_path"] = "data/location_dat.csv"
+            update_config_file(updated_params)
+            reload_runtime_config()
             
             st.success("✅ Location data updated!")
         except Exception as e:
@@ -309,22 +377,86 @@ with left_col:
     st.markdown("### 🎯 Target Parameters")
     st.subheader("Forecast Target Configurations 🔧")
 
-    train_ranges = render_range_inputs("Training Steps", "train_ranges")
-    test_ranges = render_range_inputs("Forecasting Steps", "test_ranges")
+    n_binned_steps = len(bin_array(config_param.hosp_dat[0, :], 0, config_param.bin_size, 0))
+    max_bin_idx = max(0, n_binned_steps - 1)
+    reference_date = pd.Timestamp(config_param.zero_date)
+    min_date = reference_date.date()
+    max_date = (reference_date + _timedelta_from_bins(max_bin_idx)).date()
 
-    maxTbinned = len(bin_array(config_param.hosp_dat[0, :], 0, config_param.bin_size, 0))
+    train_col_1, train_col_2 = st.columns(2)
+    with train_col_1:
+        train_start_default = (reference_date + _timedelta_from_bins(max(0, min(int(config_param.start_train), max_bin_idx)))).date()
+        train_start_date = st.date_input(
+            "Training Start Date",
+            value=train_start_default,
+            min_value=min_date,
+            max_value=max_date,
+        )
+    with train_col_2:
+        train_end_default = (reference_date + _timedelta_from_bins(max(0, min(int(config_param.end_train), max_bin_idx)))).date()
+        train_end_date = st.date_input(
+            "Training End Date",
+            value=train_end_default,
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+    forecast_col_1, forecast_col_2 = st.columns(2)
+    forecast_mode = st.radio(
+        "Forecast Origin Mode",
+        options=["Single origin date", "Date range"],
+        horizontal=True,
+        help="Use a single origin date for one-time forecast generation, or a range for multiple origins.",
+    )
+
+    with forecast_col_1:
+        forecast_start_default = (reference_date + _timedelta_from_bins(max(0, min(int(config_param.start_test), max_bin_idx)))).date()
+        forecast_start_date = st.date_input(
+            "Forecast Start Date",
+            value=forecast_start_default,
+            min_value=min_date,
+            max_value=max_date,
+        )
+    with forecast_col_2:
+        if forecast_mode == "Single origin date":
+            forecast_end_date = forecast_start_date
+            st.date_input(
+                "Forecast End Date",
+                value=forecast_end_date,
+                min_value=min_date,
+                max_value=max_date,
+                disabled=True,
+            )
+        else:
+            forecast_end_default = (reference_date + _timedelta_from_bins(max(0, min(int(config_param.end_test), max_bin_idx)))).date()
+            forecast_end_date = st.date_input(
+                "Forecast End Date",
+                value=forecast_end_default,
+                min_value=min_date,
+                max_value=max_date,
+            )
+
+    train_start_bin = _date_to_bin_index(train_start_date, reference_date, max_bin_idx)
+    train_end_bin = _date_to_bin_index(train_end_date, reference_date, max_bin_idx)
+    forecast_start_bin = _date_to_bin_index(forecast_start_date, reference_date, max_bin_idx)
+    forecast_end_bin = _date_to_bin_index(forecast_end_date, reference_date, max_bin_idx)
+
+    train_start_label = pd.Timestamp(train_start_date).date().isoformat()
+    train_end_label = pd.Timestamp(train_end_date).date().isoformat()
+    forecast_start_label = pd.Timestamp(forecast_start_date).date().isoformat()
+    forecast_end_label = pd.Timestamp(forecast_end_date).date().isoformat()
+
+    updated_params["training_window_start_date"] = train_start_label
+    updated_params["training_window_end_date"] = train_end_label
+    updated_params["forecast_window_start_date"] = forecast_start_label
+    updated_params["forecast_window_end_date"] = forecast_end_label
 
     # Merge lookbacks
-    train_days = sorted(set(np.concatenate([np.arange(s, e+2) for s, e in train_ranges])))
-    train_lookback = [maxTbinned - i for i in train_days]
-    test_days = sorted(set(np.concatenate([np.arange(s, e+1) for s, e in test_ranges])))
-    test_lookback = [maxTbinned - i for i in test_days]
+    train_days = sorted(set(np.arange(train_start_bin, train_end_bin + 2)))
+    train_lookback = [n_binned_steps - i for i in train_days]
+    test_days = sorted(set(np.arange(forecast_start_bin, forecast_end_bin + 1)))
+    test_lookback = [n_binned_steps - i for i in test_days]
     retro_lookback = sorted(set(train_lookback + test_lookback))
-
-    #print(retro_lookback)
-
-    updated_params["retro_lookback"] = np.array(retro_lookback)
-    updated_params["test_lookback"] = np.array(test_lookback)
 
     # st.markdown("#### Preview")
     # st.code(f"Run the predictors for:  {retro_lookback}")
@@ -343,38 +475,42 @@ with left_col:
 
         value = params[key]
         new_value = value  # Default
+        display_name = DISPLAY_PARAM_NAMES.get(key, key)
 
 
-        st.write(f"**{key}**")
+        label_col, input_col = st.columns([2, 3])
+        with label_col:
+            st.write(f"**{display_name}**")
 
-        if isinstance(value, int):
-            new_value = st.number_input(f"{key}", value=value, step=1, label_visibility="collapsed", min_value=0)
-        elif isinstance(value, float):
-            new_value = st.number_input(f"{key}", value=value, step=0.01, label_visibility="collapsed", min_value=0.0)
-        elif isinstance(value, str):
-            new_value = st.text_input(f"{key}", value=value, label_visibility="collapsed")
-        elif isinstance(value, list):
-            new_value = st.text_area(f"{key} (Comma-separated)", value=", ".join(map(str, value)))
-            new_value = [v.strip() for v in new_value.split(",") if v.strip()]
-            try:
-                new_value = [float(v) for v in new_value]
-                if any(v < 0 for v in new_value):
-                    st.error(f"❌ {key} cannot contain negative values.")
+        with input_col:
+            if isinstance(value, int):
+                new_value = st.number_input(f"{display_name}", value=value, step=1, label_visibility="collapsed", min_value=0)
+            elif isinstance(value, float):
+                new_value = st.number_input(f"{display_name}", value=value, step=0.01, label_visibility="collapsed", min_value=0.0)
+            elif isinstance(value, str):
+                new_value = st.text_input(f"{display_name}", value=value, label_visibility="collapsed")
+            elif isinstance(value, list):
+                new_value = st.text_area(f"{display_name} (Comma-separated)", value=", ".join(map(str, value)))
+                new_value = [v.strip() for v in new_value.split(",") if v.strip()]
+                try:
+                    new_value = [float(v) for v in new_value]
+                    if any(v < 0 for v in new_value):
+                        st.error(f"❌ {display_name} cannot contain negative values.")
+                        new_value = value  # Revert to old value
+                except ValueError:
+                    st.error(f"❌ Invalid input for {display_name}. Please enter numbers only.")
                     new_value = value  # Revert to old value
-            except ValueError:
-                st.error(f"❌ Invalid input for {key}. Please enter numbers only.")
-                new_value = value  # Revert to old value
 
-        elif isinstance(value, np.ndarray):
-            new_value = st.text_area(f"{key} (Comma-separated NumPy Array)", value=", ".join(map(str, value.tolist())))
-            try:
-                new_value = np.array([float(v.strip()) for v in new_value.split(",") if v.strip()])
-                if (new_value < 0).any():
-                    st.error(f"❌ {key} cannot contain negative values.")
-                    new_value = value  # Revert to old value
-            except ValueError:
-                st.error(f"❌ Invalid input for {key}. Please enter numbers only.")
-                new_value = value
+            elif isinstance(value, np.ndarray):
+                new_value = st.text_area(f"{display_name} (Comma-separated)", value=", ".join(map(str, value.tolist())))
+                try:
+                    new_value = np.array([float(v.strip()) for v in new_value.split(",") if v.strip()])
+                    if (new_value < 0).any():
+                        st.error(f"❌ {display_name} cannot contain negative values.")
+                        new_value = value  # Revert to old value
+                except ValueError:
+                    st.error(f"❌ Invalid input for {display_name}. Please enter numbers only.")
+                    new_value = value
 
             # Store updates only if changed
         if isinstance(value, np.ndarray) and not np.array_equal(new_value, value):
@@ -390,20 +526,35 @@ with right_col:
 
     st.subheader("📊 Forecast Results")
     # Choose ensemble strategy (two options)
+    ensemble_options = ["Random Forest", "Basic"]
+    config_ensemble = getattr(config_param, "ensemble_method", "Random Forest")
+    default_ensemble_index = ensemble_options.index(config_ensemble) if config_ensemble in ensemble_options else 0
     ensemble_choice = st.selectbox(
         "Ensemble method",
-        options=["Random Forest", "Basic"],
-        index=0,
+        options=ensemble_options,
+        index=default_ensemble_index,
         help="Choose how to combine predictor outputs into final forecasts"
     )
     st.session_state["ensemble_method"] = ensemble_choice
+    updated_params["ensemble_method"] = ensemble_choice
     # Button logic: always show Save & Run; show Rerun Ensemble if predictors exist
     has_preds = ("all_preds" in st.session_state) and isinstance(st.session_state["all_preds"], dict) and len(st.session_state["all_preds"]) > 0
 
     if st.button("💾 Save & Run Forecasts", use_container_width=True):
+        window_errors = validate_window_bins(train_start_bin, train_end_bin, forecast_start_bin, forecast_end_bin)
+        if window_errors:
+            for msg in window_errors:
+                st.error(f"❌ {msg}")
+            st.stop()
+
         if updated_params:
-            update_config_file(updated_params)
-            st.toast("✅ Configuration Updated!") 
+            try:
+                update_config_file(updated_params)
+                reload_runtime_config()
+                st.toast("✅ Configuration Updated!")
+            except Exception as e:
+                st.error(f"❌ Error applying configuration: {e}")
+                st.stop()
 
         progress_bar = st.progress(0.0)
         progress_text = st.empty()  # Create an empty container for text
@@ -424,15 +575,27 @@ with right_col:
             st.session_state["preds"] = gen_predictions.generate_preds(
                 st.session_state["all_preds"], st.session_state["hosp_dat"], ensemble=ensemble
             )
+            st.session_state["preds_df"] = gen_predictions.predictions_to_long_df(st.session_state["preds"])
         st.toast("✅ Predictions generated successfully!")
         st.session_state["forecast_ready"] = True
 
     if has_preds:
         if st.button("🔁 Rerun Ensemble", use_container_width=True):
+            window_errors = validate_window_bins(train_start_bin, train_end_bin, forecast_start_bin, forecast_end_bin)
+            if window_errors:
+                for msg in window_errors:
+                    st.error(f"❌ {msg}")
+                st.stop()
+
             # Optional: update only ensemble-related params (e.g., quantiles). For now, apply any updates.
             if updated_params:
-                update_config_file(updated_params)
-                st.toast("✅ Ensemble Configuration Updated!")
+                try:
+                    update_config_file(updated_params)
+                    reload_runtime_config()
+                    st.toast("✅ Ensemble Configuration Updated!")
+                except Exception as e:
+                    st.error(f"❌ Error applying configuration: {e}")
+                    st.stop()
 
             import config_model as _cfg_model
             ensemble = _cfg_model.create_ensemble(st.session_state.get("ensemble_method", ensemble_choice))
@@ -440,6 +603,7 @@ with right_col:
                 st.session_state["preds"] = gen_predictions.generate_preds(
                     st.session_state["all_preds"], st.session_state["hosp_dat"], ensemble=ensemble
                 )
+                st.session_state["preds_df"] = gen_predictions.predictions_to_long_df(st.session_state["preds"])
             st.toast("✅ Ensemble re-generated successfully!")
             st.session_state["forecast_ready"] = True
 
@@ -450,6 +614,11 @@ with right_col:
     hosp_dat = config_param.hosp_dat
     maxt = hosp_dat.shape[1]
     observed_data = bin_array((config_param.hosp_dat[cid, :]), 0, config_param.bin_size, 0)
+    reference_date = pd.Timestamp(config_param.zero_date)
+    observed_dates = [
+        (reference_date + _timedelta_from_bins(i)).date().isoformat()
+        for i in range(len(observed_data))
+    ]
 
 
 
@@ -458,7 +627,7 @@ with right_col:
 
     # Add observed data trace
     fig.add_trace(go.Scatter(
-        x=list(range(0, len(observed_data))),
+        x=observed_dates,
         y=observed_data,
         mode='lines',
         name='Observed'
@@ -466,47 +635,70 @@ with right_col:
 
     fig.update_layout(
         title=f"📊 Ground Truth for {state_select}",
-        xaxis_title="Day",
+        xaxis_title="Date",
         yaxis_title="Values",
         template="plotly_white"
     )
 
     if st.session_state.get("forecast_ready"):
-        all_preds = st.session_state["all_preds"]
         preds = st.session_state["preds"]
 
-        #cid represents the state
-        
-        #x represents the lookback for which we are going to generate the predictions
-        dd = st.selectbox(
-            "Select Forecast Day",
-            options=[maxTbinned-i for i in list(config_param.test_lookback)],
-            index=len(config_param.test_lookback) - 1
+        if "preds_df" not in st.session_state:
+            st.session_state["preds_df"] = gen_predictions.predictions_to_long_df(preds)
+
+        preds_df = st.session_state["preds_df"]
+        required_pred_cols = {"origin_date", "location", "horizon", "output_type_id", "value"}
+        if preds_df.empty or not required_pred_cols.issubset(set(preds_df.columns)):
+            st.warning("No forecasts available for the current selection. Try an earlier forecast origin date or broader forecast window.")
+            st.plotly_chart(fig, use_container_width=True)
+            st.stop()
+
+        st.download_button(
+            label="⬇️ Download All Forecasts (CSV)",
+            data=preds_df.to_csv(index=False).encode("utf-8"),
+            file_name="lemma_forecasts.csv",
+            mime="text/csv",
+            use_container_width=True,
         )
-        x = maxTbinned - dd
-        
-        ## Specify a range of final predictions
-        test_lookback = x
-        pred_start = (maxt - test_lookback * config_param.bin_size)
-        tt = np.arange(2 + pred_start // config_param.bin_size, pred_start // config_param.bin_size + config_param.weeks_ahead + 2)
+        st.caption(f"Rows available for download: {len(preds_df)}")
 
+        state_preds = preds_df[preds_df["location"] == state_select]
+        origin_options = sorted(state_preds["origin_date"].astype(str).unique().tolist())
 
-        if (test_lookback, cid) in preds:
-            prediction_data = preds[(test_lookback, cid)]  # Assuming this is a 2D array
-            num_lines = prediction_data.shape[1]  # Number of columns (lines)
-
-            for i in range(num_lines):
-                fig.add_trace(go.Scatter(
-                x=tt,
-                y=prediction_data[:, i],  # Add each column as a separate line
-                mode='lines',
-                name=f'Predicted ({config_param.quantiles[i]})'  # Label each line uniquely
-                ))
-                fig.update_layout(
-                    title=f"📊 Ground Truth and Forecasts for {state_select}",
-                )
-        else:
+        if not origin_options:
             st.warning("Prediction not available for this selection.")
+        else:
+            origin_ts_list = sorted(pd.to_datetime(origin_options).tolist())
+            origin_pick = st.date_input(
+                "Select Forecast Origin Date",
+                value=origin_ts_list[-1].date(),
+                min_value=origin_ts_list[0].date(),
+                max_value=origin_ts_list[-1].date(),
+            )
+            origin_ts = pd.Timestamp(origin_pick)
+            nearest_origin = min(origin_ts_list, key=lambda d: abs((d - origin_ts).days))
+            origin_date = nearest_origin.date().isoformat()
+
+            selected_preds = state_preds[state_preds["origin_date"].astype(str) == origin_date]
+            quantile_ids = sorted(selected_preds["output_type_id"].unique().tolist())
+            origin_ts = pd.Timestamp(origin_date)
+
+            for q in quantile_ids:
+                q_preds = selected_preds[selected_preds["output_type_id"] == q].sort_values("horizon")
+                pred_dates = [
+                    (origin_ts + _timedelta_from_bins(int(h))).date().isoformat()
+                    for h in q_preds["horizon"].tolist()
+                ]
+                fig.add_trace(go.Scatter(
+                    x=pred_dates,
+                    y=q_preds["value"].to_numpy(),
+                    mode='lines',
+                    name=f"Predicted ({q})"
+                ))
+
+            fig.update_layout(
+                title=f"📊 Ground Truth and Forecasts for {state_select}",
+            )
 
     # Render the Plotly chart
     st.plotly_chart(fig, use_container_width=True)
