@@ -104,14 +104,16 @@ def reload_runtime_config():
     """Reload user-facing and derived config modules so changes apply immediately."""
     importlib.invalidate_caches()
 
-    if "user_config" in sys.modules:
-        importlib.reload(sys.modules["user_config"])
+    user_module = sys.modules.get("user_config")
+    if user_module is not None:
+        importlib.reload(user_module)
     else:
         importlib.import_module("user_config")
 
     global config_param
-    if "config_param" in sys.modules:
-        config_param = importlib.reload(sys.modules["config_param"])
+    config_module = sys.modules.get("config_param")
+    if config_module is not None:
+        config_param = importlib.reload(config_module)
     else:
         config_param = importlib.import_module("config_param")
 
@@ -348,29 +350,109 @@ left_col, right_col = st.columns(2)  # Adjust width
 
 with left_col:
     st.markdown("### 📂 Input Files (Source Files)")
-    hosp_dat_file = st.file_uploader("Upload Target Data (CSV)", type=["csv"])
-    if hosp_dat_file:
-        hosp_dat = pd.read_csv(hosp_dat_file, header=None)
-        try:
-            hosp_dat.to_csv("data/ts_dat.csv", index=False, header=False)  
-            updated_params["ts_dat"] = "data/ts_dat.csv"  
-            st.success("✅ Input data updated!")
-            update_config_file(updated_params)
-        except Exception as e:
-            st.error(f"❌ Error loading file: {e}")
+    configured_hv = str(getattr(config_param, "hubverse_input_path", "") or "").strip()
+    default_mode = "Hubverse Target Data" if configured_hv else "Matrix + Location/Population"
+    input_mode = st.radio(
+        "Observed Data Input Mode",
+        ["Hubverse Target Data", "Matrix + Location/Population"],
+        index=0 if default_mode == "Hubverse Target Data" else 1,
+        horizontal=True,
+    )
 
-    location_file = st.file_uploader("Upload Location, Population Data (CSV)", type=["csv"])
-    if location_file:
-        try:
-            location_dat = pd.read_csv(location_file, delimiter=',')
-            location_dat.to_csv("data/location_dat.csv", index=False)  
-            updated_params["location_dat_path"] = "data/location_dat.csv"
-            update_config_file(updated_params)
-            reload_runtime_config()
-            
-            st.success("✅ Location data updated!")
-        except Exception as e:
-            st.error(f"❌ Error loading file: {e}")
+    if input_mode == "Hubverse Target Data":
+        st.caption("Upload Hubverse observed target-data CSV (location/target_end_date + weekly_rate or observation).")
+        hubverse_observed_file = st.file_uploader("Upload Hubverse Target Data (CSV)", type=["csv"])
+        hubverse_location_file = st.file_uploader(
+            "Upload Location, Population Data (optional)",
+            type=["csv"],
+            help="Optional in Hubverse mode. If provided, it is used to map populations by location_name.",
+        )
+        hubverse_target_value = st.text_input(
+            "Hubverse target to use (optional)",
+            value=str(getattr(config_param, "hubverse_target", "") or ""),
+            help="If left empty and the file has a target column, each (location, target) pair is treated as a distinct location row.",
+        )
+
+        if hubverse_location_file:
+            try:
+                location_dat = pd.read_csv(hubverse_location_file, delimiter=',')
+                location_dat.to_csv("data/location_dat.csv", index=False)
+                updated_params["location_dat_path"] = "data/location_dat.csv"
+                update_config_file(updated_params)
+                reload_runtime_config()
+                st.success("✅ Optional location/population data updated for Hubverse mode!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error loading optional location file: {e}")
+
+        active_hubverse_path = configured_hv if configured_hv else None
+        if hubverse_observed_file:
+            hubverse_sig = f"{hubverse_observed_file.name}:{hubverse_observed_file.size}"
+            hubverse_path = "data/hubverse_target_data.csv"
+            active_hubverse_path = hubverse_path
+            if st.session_state.get("hubverse_upload_sig") != hubverse_sig:
+                try:
+                    with open(hubverse_path, "wb") as f:
+                        f.write(hubverse_observed_file.getbuffer())
+
+                    updated_params["hubverse_input_path"] = hubverse_path
+                    updated_params["hubvsereInput"] = hubverse_path
+                    updated_params["hubverse_target"] = hubverse_target_value.strip() or None
+                    update_config_file(updated_params)
+                    reload_runtime_config()
+                    st.session_state["hubverse_upload_sig"] = hubverse_sig
+                    st.success("✅ Hubverse observed target-data input enabled!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error loading Hubverse file: {e}")
+
+        if active_hubverse_path is not None:
+            current_target = str(getattr(config_param, "hubverse_target", "") or "").strip()
+            desired_target = hubverse_target_value.strip()
+            if desired_target != current_target:
+                try:
+                    updated_params["hubverse_input_path"] = active_hubverse_path
+                    updated_params["hubvsereInput"] = active_hubverse_path
+                    updated_params["hubverse_target"] = desired_target or None
+                    update_config_file(updated_params)
+                    reload_runtime_config()
+                    st.success("✅ Hubverse target updated!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error applying Hubverse target: {e}")
+
+    else:
+        hosp_dat_file = st.file_uploader("Upload Target Data (CSV)", type=["csv"])
+        if hosp_dat_file:
+            matrix_sig = f"{hosp_dat_file.name}:{hosp_dat_file.size}"
+            if st.session_state.get("matrix_upload_sig") != matrix_sig:
+                hosp_dat = pd.read_csv(hosp_dat_file, header=None)
+                try:
+                    hosp_dat.to_csv("data/ts_dat.csv", index=False, header=False)
+                    updated_params["ts_dat"] = "data/ts_dat.csv"
+                    updated_params["hubverse_input_path"] = None
+                    updated_params["hubvsereInput"] = None
+                    updated_params["hubverse_target"] = None
+                    update_config_file(updated_params)
+                    reload_runtime_config()
+                    st.session_state["matrix_upload_sig"] = matrix_sig
+                    st.success("✅ Target matrix data updated!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error loading file: {e}")
+
+        location_file = st.file_uploader("Upload Location, Population Data (CSV)", type=["csv"])
+        if location_file:
+            try:
+                location_dat = pd.read_csv(location_file, delimiter=',')
+                location_dat.to_csv("data/location_dat.csv", index=False)
+                updated_params["location_dat_path"] = "data/location_dat.csv"
+                update_config_file(updated_params)
+                reload_runtime_config()
+                st.success("✅ Location data updated!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error loading file: {e}")
          
 
     st.markdown("---")

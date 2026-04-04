@@ -36,15 +36,28 @@ quantiles = np.array([0.0, 0.5, 1.0])
 target_data_path = "data/ts_dat.csv"
 location_metadata_path = "data/location_dat.csv"
 
+# Optional Hubverse observed target-data CSV input. If set, this overrides
+# target_data_path/location metadata-derived matrix/date settings.
+# Keep as None to use the legacy matrix input at target_data_path.
+hubverse_input_path = "data/hubverse_target_data.csv"
+
+# Optional compatibility alias (kept for older references/typos).
+hubvsereInput = "data/hubverse_target_data.csv"
+
+# Optional target name to filter when Hubverse file has a 'target' column.
+# If None and 'target' exists, each (location, target) pair is treated as one
+# location row in the internal 2D matrix.
+hubverse_target = "wk inc flu hosp"
+
 # Training/forecast window dates.
 # Set to None to use automatic defaults based on available data:
 # - training start: 10 bins before last trainable bin (or first date)
 # - training end: last trainable bin given bins_ahead
 # - forecast start/end: last available origin date
-training_window_start_date = None
-training_window_end_date = None
-forecast_window_start_date = None
-forecast_window_end_date = None
+training_window_start_date = "2025-12-13"
+training_window_end_date = "2026-02-21"
+forecast_window_start_date = "2026-03-21"
+forecast_window_end_date = "2026-03-21"
 
 # CLI export settings.
 forecast_output_path = "outputs/predictions.csv"

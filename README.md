@@ -24,6 +24,12 @@ The web interface is designed to be user-friendly and intuitive, making it acces
 - **Upload Input Files**:
     In the 📂 Input Files (Source Files) section:
     - Upload the Target Data (CSV) file for the target data (cases/ hospitalizations/ deaths). The file must be a matrix of numbers (no headers) with each row indicating the time-series for one location.
+        - Or upload a Hubverse observed target-data CSV (must include `location`, `target_end_date`, and at least one of `weekly_rate` or `observation`).
+            - If the file includes `target`, set `hubverse_target` to select one target.
+            - If `target` exists and `hubverse_target` is not set, each `(location, target)` pair is treated as a separate location row internally.
+            - If `weekly_rate` is present, it is preferred over `observation`.
+            - If population metadata is unavailable, LEMMA uses a dummy shared population value of `100 * max(observed_value)`.
+            - You may optionally upload a location/population file in Hubverse mode; if provided, it is used for population mapping.
     - Upload the Location Data (CSV) file for location names and populations. This must be a csv file containing two headers:
     *location_name*: Location names corresponding to each row in the Target Data file
     *population*: Population of the corresponding location
@@ -101,6 +107,7 @@ All user-facing configuration is in `user_config.py`.
 - **Quantiles:** `quantiles` (default: [0.0, 0.5, 1.0])
 - **Ensemble:** `ensemble_method` (default: Random Forest)
 - **Data paths:** `target_data_path`, `location_metadata_path`
+- **Hubverse observed input (optional):** `hubverse_input_path` (or compatibility alias `hubvsereInput`), `hubverse_target`
 - **CLI export:** `forecast_output_path`, `forecast_output_format`
 
 **Derived/internal values (normally do not edit):**

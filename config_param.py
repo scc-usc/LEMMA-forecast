@@ -1,5 +1,6 @@
 import numpy as np
 from datetime import datetime
+import os
 
 import pandas as pd
 
@@ -24,6 +25,104 @@ def _to_datetime(v):
     if isinstance(v, datetime):
         return v
     return pd.Timestamp(v).to_pydatetime()
+
+
+def _load_hubverse_observed_data(hubverse_path, location_df, target_filter=None):
+    hv = pd.read_csv(hubverse_path)
+    required_cols = {"location", "target_end_date"}
+    missing = required_cols - set(hv.columns)
+    if missing:
+        missing_str = ", ".join(sorted(missing))
+        raise ValueError(f"Hubverse input is missing required columns: {missing_str}")
+
+    has_weekly_rate = "weekly_rate" in hv.columns
+    has_observation = "observation" in hv.columns
+    if not has_weekly_rate and not has_observation:
+        raise ValueError("Hubverse input must contain at least one of: weekly_rate, observation")
+
+    hv = hv.copy()
+    hv["location"] = hv["location"].astype(str)
+    hv["target_end_date"] = pd.to_datetime(hv["target_end_date"], errors="coerce")
+
+    value_col = None
+    if has_weekly_rate:
+        hv["weekly_rate"] = pd.to_numeric(hv["weekly_rate"], errors="coerce")
+        if hv["weekly_rate"].notna().any():
+            value_col = "weekly_rate"
+    if value_col is None:
+        hv["observation"] = pd.to_numeric(hv.get("observation"), errors="coerce")
+        value_col = "observation"
+
+    hv = hv.dropna(subset=["location", "target_end_date", value_col])
+
+    if hv.empty:
+        raise ValueError("Hubverse input has no valid rows after parsing location/date/value")
+
+    has_target_col = "target" in hv.columns
+    if has_target_col:
+        hv["target"] = hv["target"].astype(str)
+        if target_filter is not None and str(target_filter).strip() != "":
+            hv = hv[hv["target"] == str(target_filter)]
+            if hv.empty:
+                raise ValueError(
+                    f"Hubverse input has no rows for hubverse_target='{target_filter}'"
+                )
+            hv["row_id"] = hv["location"]
+        else:
+            # If target is present but no explicit target selected, treat each
+            # (location, target) pair as a distinct location row.
+            hv["row_id"] = hv["location"] + "__" + hv["target"]
+    else:
+        hv["row_id"] = hv["location"]
+
+    min_date = hv["target_end_date"].min().normalize()
+    max_date = hv["target_end_date"].max().normalize()
+    all_dates = pd.date_range(start=min_date, end=max_date, freq="D")
+
+    row_order = hv["row_id"].drop_duplicates().tolist()
+    matrix_df = (
+        hv.pivot_table(
+            index="row_id",
+            columns="target_end_date",
+            values=value_col,
+            aggfunc="sum",
+        )
+        .reindex(index=row_order)
+        .reindex(columns=all_dates)
+        .fillna(0.0)
+    )
+
+    hosp_matrix = matrix_df.to_numpy(dtype=float)
+    state_names = matrix_df.index.astype(str).tolist()
+
+    base_locations = [name.split("__", 1)[0] for name in state_names]
+
+    if value_col == "weekly_rate":
+        # Weekly rate is already population-normalized; keep neutral scaling.
+        populations = np.ones(len(base_locations), dtype=float)
+    else:
+        pop_map = {}
+        if location_df is not None and {"location_name", "population"}.issubset(set(location_df.columns)):
+            pop_map = dict(
+                zip(
+                    location_df["location_name"].astype(str),
+                    pd.to_numeric(location_df["population"], errors="coerce"),
+                )
+            )
+
+        matrix_max = float(np.nanmax(hosp_matrix)) if hosp_matrix.size else 1.0
+        dummy_pop = max(1.0, 100.0 * matrix_max)
+        populations = np.array(
+            [
+                float(pop_map.get(loc))
+                if pd.notna(pop_map.get(loc, np.nan)) and float(pop_map.get(loc)) > 0
+                else dummy_pop
+                for loc in base_locations
+            ],
+            dtype=float,
+        )
+
+    return hosp_matrix, populations, state_names, min_date.to_pydatetime()
 
 
 # Time semantics
@@ -71,9 +170,30 @@ cli_output_format = getattr(user, "forecast_output_format", "csv")
 # Data sources
 ts_dat = getattr(user, "target_data_path", "data/ts_dat.csv")
 location_dat_path = getattr(user, "location_metadata_path", "data/location_dat.csv")
+location_dat = None
+if location_dat_path is not None and str(location_dat_path).strip() != "" and os.path.exists(str(location_dat_path)):
+    location_dat = pd.read_csv(location_dat_path, delimiter=",")
 
-hosp_dat = pd.read_csv(ts_dat, delimiter=",", header=None).to_numpy()
-location_dat = pd.read_csv(location_dat_path, delimiter=",")
+hubverse_input_path = getattr(
+    user,
+    "hubverse_input_path",
+    getattr(user, "hubvsereInput", None),
+)
+hubverse_target = getattr(user, "hubverse_target", None)
+
+if hubverse_input_path is not None and str(hubverse_input_path).strip() != "":
+    hosp_dat, popu, state_abbr, zero_date = _load_hubverse_observed_data(
+        str(hubverse_input_path).strip(), location_dat, hubverse_target
+    )
+else:
+    if location_dat is None:
+        raise ValueError("location_metadata_path is required when not using hubverse_input_path")
+    hosp_dat = pd.read_csv(ts_dat, delimiter=",", header=None).to_numpy(dtype=float)
+    popu = location_dat["population"].to_numpy(dtype=float)
+    state_abbr = location_dat["location_name"].astype(str).to_list()
+
+season_end = zero_date
+season_start_day = (season_start - season_end).days
 
 alpha = 1
 beta = 1
@@ -167,9 +287,6 @@ hosp_dat_cumu = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1), 1)
 hosp_dat = np.diff(hosp_dat_cumu, axis=1)
 hosp_dat = np.concatenate((hosp_dat[:, 0:1], hosp_dat), axis=1)
 hosp_cumu_s_org = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1))
-
-popu = location_dat["population"].to_numpy()
-state_abbr = location_dat["location_name"].to_list()
 
 
 def validate_config():
