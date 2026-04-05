@@ -10,7 +10,7 @@ from shared_utils.utils import bin_array
 import matplotlib.pyplot as plt
 
 
-def generate_all_preds(progress_callback=None):
+def generate_all_preds(progress_callback=None, use_threads=False):
     # hosp_cumu_s_org= np.loadtxt('data/hosp_cumu_s.csv', delimiter=',')
 
     # hosp_dat = pd.read_csv('data/hosp_dat.csv')
@@ -19,7 +19,15 @@ def generate_all_preds(progress_callback=None):
     hosp_dat = config_param.hosp_dat
     popu = config_param.popu
     retro_lookback = config_param.retro_lookback
-    all_preds = generate_predictors(hosp_cumu_s_org, hosp_dat, popu, config_param, retro_lookback, progress_callback)    
+    all_preds = generate_predictors(
+        hosp_cumu_s_org,
+        hosp_dat,
+        popu,
+        config_param,
+        retro_lookback,
+        progress_callback,
+        use_threads=use_threads,
+    )
     return all_preds, hosp_dat
 
 

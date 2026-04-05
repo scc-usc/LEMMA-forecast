@@ -54,10 +54,10 @@ hubverse_target = "wk inc flu hosp"
 # - training start: 10 bins before last trainable bin (or first date)
 # - training end: last trainable bin given bins_ahead
 # - forecast start/end: last available origin date
-training_window_start_date = "2025-12-13"
-training_window_end_date = "2026-02-21"
-forecast_window_start_date = "2026-03-21"
-forecast_window_end_date = "2026-03-21"
+training_window_start_date = None
+training_window_end_date = None
+forecast_window_start_date = None
+forecast_window_end_date = None
 
 # CLI export settings.
 forecast_output_path = "outputs/predictions.csv"

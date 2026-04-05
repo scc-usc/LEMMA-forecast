@@ -1,40 +1,19 @@
 import streamlit as st
-import time
 import config_param
-import importlib
 import numpy as np
 import gen_predictions
 import pandas as pd
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-import sys
 import os
 from datetime import timedelta
 #sys.path.append('~/code/lemma-repo/LEMMA')
 from shared_utils.utils import bin_array
 from approaches import get_approach, approaches as model_config_approaches
+import preprocess.util_function as pp
 if "forecast_ready" not in st.session_state:
     st.session_state["forecast_ready"] = False
 
 st.set_page_config(initial_sidebar_state= "collapsed", layout="wide", page_title="Forecast Generator", page_icon="💡")
-
-CONFIG_FILE = "user_config.py"
-
-CONFIG_KEY_MAP = {
-    "selected_approach": "predictor_approach",
-    "weeks_ahead": "bins_ahead",
-    "bin_size": "timesteps_per_bin",
-    "start_train": "training_window_start_bin",
-    "end_train": "training_window_end_bin",
-    "start_test": "forecast_window_start_bin",
-    "end_test": "forecast_window_end_bin",
-    "ts_dat": "target_data_path",
-    "location_dat_path": "location_metadata_path",
-    "ar_p_list": "arima_autoregressive_orders",
-    "d_list": "arima_differencing_orders",
-    "flat_k_list": "flatline_lag_timesteps",
-    "rlag_list": "retro_lag_bins",
-}
 
 EDITABLE_PARAMS = ["weeks_ahead", "bin_size", "start_train", "end_train", "start_test", "end_test", "quantiles"]
 DISPLAY_PARAM_NAMES = {
@@ -101,111 +80,110 @@ def validate_window_bins(train_start_bin, train_end_bin, forecast_start_bin, for
 
 
 def reload_runtime_config():
-    """Reload user-facing and derived config modules so changes apply immediately."""
-    importlib.invalidate_caches()
+    """Apply GUI runtime overrides directly to config_param and refresh derived fields."""
+    runtime_overrides = st.session_state.get("_runtime_config_overrides", {})
 
-    user_module = sys.modules.get("user_config")
-    if user_module is not None:
-        importlib.reload(user_module)
+    for key, value in runtime_overrides.items():
+        setattr(config_param, key, value)
+
+    _refresh_runtime_data_from_current_paths()
+    _recompute_runtime_derived_fields()
+
+
+def _refresh_runtime_data_from_current_paths():
+    location_path = getattr(config_param, "location_dat_path", None)
+    location_df = None
+    if location_path is not None and str(location_path).strip() != "" and os.path.exists(str(location_path)):
+        location_df = pd.read_csv(str(location_path), delimiter=",")
+
+    hubverse_path = getattr(config_param, "hubverse_input_path", None)
+    hubverse_path = str(hubverse_path).strip() if hubverse_path is not None else ""
+
+    if hubverse_path:
+        hosp_raw, popu, state_abbr, zero_date = config_param._load_hubverse_observed_data(
+            hubverse_path,
+            location_df,
+            getattr(config_param, "hubverse_target", None),
+        )
+        config_param.zero_date = zero_date
     else:
-        importlib.import_module("user_config")
+        if location_df is None:
+            raise ValueError("location_metadata_path is required when not using hubverse_input_path")
+        ts_path = getattr(config_param, "ts_dat", "data/ts_dat.csv")
+        hosp_raw = pd.read_csv(ts_path, delimiter=",", header=None).to_numpy(dtype=float)
+        popu = location_df["population"].to_numpy(dtype=float)
+        state_abbr = location_df["location_name"].astype(str).to_list()
 
-    global config_param
-    config_module = sys.modules.get("config_param")
-    if config_module is not None:
-        config_param = importlib.reload(config_module)
+    hosp_dat_cumu = pp.smooth_epidata(np.cumsum(hosp_raw, axis=1), 1)
+    hosp_dat = np.diff(hosp_dat_cumu, axis=1)
+    hosp_dat = np.concatenate((hosp_dat[:, 0:1], hosp_dat), axis=1)
+
+    config_param.hosp_dat = hosp_dat
+    config_param.popu = popu
+    config_param.state_abbr = state_abbr
+    config_param.hosp_cumu_s_org = pp.smooth_epidata(np.cumsum(hosp_dat, axis=1))
+
+
+def _recompute_runtime_derived_fields():
+    config_param.bin_size = int(getattr(config_param, "bin_size", 7))
+    config_param.weeks_ahead = int(getattr(config_param, "weeks_ahead", 4))
+    config_param.quantiles = np.asarray(getattr(config_param, "quantiles", np.array([0.0, 0.5, 1.0])), dtype=float)
+
+    n_binned_steps = max(1, config_param.hosp_dat.shape[1] // config_param.bin_size)
+    max_origin_bin = max(0, n_binned_steps - 1)
+
+    default_train_end = max(0, max_origin_bin - config_param.weeks_ahead)
+    default_train_start = max(0, default_train_end - 10)
+    default_forecast = max_origin_bin
+
+    training_window_start_date = getattr(config_param, "training_window_start_date", None)
+    training_window_end_date = getattr(config_param, "training_window_end_date", None)
+    forecast_window_start_date = getattr(config_param, "forecast_window_start_date", None)
+    forecast_window_end_date = getattr(config_param, "forecast_window_end_date", None)
+
+    if training_window_start_date is not None:
+        config_param.start_train = _date_to_bin_index(training_window_start_date, pd.Timestamp(config_param.zero_date), max_origin_bin)
     else:
-        config_param = importlib.import_module("config_param")
+        config_param.start_train = int(np.clip(getattr(config_param, "start_train", default_train_start), 0, max_origin_bin))
+
+    if training_window_end_date is not None:
+        config_param.end_train = _date_to_bin_index(training_window_end_date, pd.Timestamp(config_param.zero_date), max_origin_bin)
+    else:
+        config_param.end_train = int(np.clip(getattr(config_param, "end_train", default_train_end), 0, max_origin_bin))
+
+    if forecast_window_start_date is not None:
+        config_param.start_test = _date_to_bin_index(forecast_window_start_date, pd.Timestamp(config_param.zero_date), max_origin_bin)
+    else:
+        config_param.start_test = int(np.clip(getattr(config_param, "start_test", default_forecast), 0, max_origin_bin))
+
+    if forecast_window_end_date is not None:
+        config_param.end_test = _date_to_bin_index(forecast_window_end_date, pd.Timestamp(config_param.zero_date), max_origin_bin)
+    else:
+        config_param.end_test = int(np.clip(getattr(config_param, "end_test", default_forecast), 0, max_origin_bin))
+
+    max_t_binned = config_param.hosp_dat.shape[1] // config_param.bin_size
+    train_days = np.arange(config_param.start_train, config_param.end_train + 2)
+    test_days = np.arange(config_param.start_test, config_param.end_test + 1)
+    train_lookback = [max_t_binned - i for i in train_days]
+    test_lookback = [max_t_binned - i for i in test_days]
+
+    config_param.test_lookback = np.array(test_lookback)
+    config_param.retro_lookback = np.array(sorted(set(train_lookback + test_lookback)))
+
+    config_param.horizon = (config_param.weeks_ahead + 1) * config_param.bin_size
+    config_param.npredictors = (
+        len(getattr(config_param, "S", np.array([0.0])))
+        * len(getattr(config_param, "halpha_list", np.array([0.98])))
+        * len(getattr(config_param, "un_list", np.array([50.0])))
+        * len(getattr(config_param, "rlag_list", np.array([1.0])))
+    ) * config_param.weeks_ahead
 
 
-# FOR ADDING PARAMETERS THAT DO NOT EXIST IN THE CONFIG FILE
-def update_config_file(updated_keys):
-    mapped_updates = {
-        CONFIG_KEY_MAP.get(key, key): value for key, value in updated_keys.items()
-    }
-
-    with open(CONFIG_FILE, "r") as f:
-        lines = f.readlines()
-
-    new_lines = []
-    found_keys = set()
-
-    for line in lines:
-        if "=" not in line:
-            new_lines.append(line)
-            continue
-
-        key = line.split("=")[0].strip()
-
-        if key in mapped_updates:
-            value = mapped_updates[key]
-            found_keys.add(key)
-        else:
-            new_lines.append(line)
-            continue
-
-        # Format value
-        if key == "hosp_dat":
-            formatted_value = f"pd.read_csv('{value}')"
-        elif key == "location_dat":
-            formatted_value = f"pd.read_csv('{value}')"
-        elif key == "popu":
-            formatted_value = f"np.loadtxt('{value}')"
-        elif key == "halpha_list":
-            try:
-                start = round(float(value[0]), 5)
-                step = round(float(value[1] - value[0]), 5)
-                stop = round(float(value[-1] + step), 5)
-                formatted_value = f"np.arange({start}, {stop}, {step})"
-            except Exception:
-                formatted_value = f"np.array({value.tolist()})"
-        elif isinstance(value, np.ndarray):
-            formatted_value = f"np.array({value.tolist()})"
-        elif isinstance(value, list):
-            formatted_value = str(value)
-        elif isinstance(value, str):
-            formatted_value = f'"{value}"'
-        else:
-            formatted_value = value
-
-        new_lines.append(f"{key} = {formatted_value}\n")
-
-    # Add any missing (new) keys
-    for key in mapped_updates.keys() - found_keys:
-        value = mapped_updates[key]
-
-        if key == "hosp_dat":
-            formatted_value = f"pd.read_csv('{value}')"
-        elif key == "location_dat":
-            formatted_value = f"pd.read_csv('{value}')"
-        elif key == "popu":
-            formatted_value = f"np.loadtxt('{value}')"
-        elif key == "halpha_list":
-            try:
-                start = round(float(value[0]), 5)
-                step = round(float(value[1] - value[0]), 5)
-                stop = round(float(value[-1] + step), 5)
-                formatted_value = f"np.arange({start}, {stop}, {step})"
-            except Exception:
-                formatted_value = f"np.array({value.tolist()})"
-        elif isinstance(value, np.ndarray):
-            formatted_value = f"np.array({value.tolist()})"
-        elif isinstance(value, list):
-            formatted_value = str(value)
-        elif isinstance(value, str):
-            formatted_value = f'"{value}"'
-        else:
-            formatted_value = value
-
-        new_lines.append(f"{key} = {formatted_value}\n")
-
-    # Atomic write to avoid partial writes.
-    tmp_path = CONFIG_FILE + ".tmp"
-    with open(tmp_path, "w") as f:
-        f.writelines(new_lines)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, CONFIG_FILE)
+# Runtime-only updates for GUI sessions (do not write user_config.py)
+def apply_runtime_config_updates(updated_keys):
+    runtime_overrides = st.session_state.setdefault("_runtime_config_overrides", {})
+    runtime_overrides.update(dict(updated_keys))
+    reload_runtime_config()
 
 
 
@@ -297,55 +275,6 @@ with st.sidebar.expander("ℹ️ How to configure hyperparameters"):
         )
 
 
-if "train_ranges" not in st.session_state:
-    st.session_state.train_ranges = [(params["start_train"], params["end_train"])]
-if "test_ranges" not in st.session_state:
-    st.session_state.test_ranges = [(params["start_test"], params["end_test"])]
-
-def render_range_inputs(label, ranges_key):
-    st.markdown(f"### {label} Ranges")
-
-    # Initialize add/remove trackers in session_state
-    if f"{ranges_key}_add_clicked" not in st.session_state:
-        st.session_state[f"{ranges_key}_add_clicked"] = False
-    if f"{ranges_key}_remove_clicked" not in st.session_state:
-        st.session_state[f"{ranges_key}_remove_clicked"] = None
-
-    # Handle add clicked
-    if st.session_state[f"{ranges_key}_add_clicked"]:
-        st.session_state[ranges_key].append((0, 0))
-        st.session_state[f"{ranges_key}_add_clicked"] = False  # reset
-
-    # Handle remove clicked
-    remove_idx = st.session_state[f"{ranges_key}_remove_clicked"]
-    if remove_idx is not None and 0 <= remove_idx < len(st.session_state[ranges_key]):
-        st.session_state[ranges_key].pop(remove_idx)
-        st.session_state[f"{ranges_key}_remove_clicked"] = None  # reset
-
-    new_ranges = []
-
-    for i, (start, end) in enumerate(st.session_state[ranges_key]):
-        cols = st.columns([3, 3, 1])
-        with cols[0]:
-            start_val = st.number_input(f"{label} Start {i+1}", value=start, key=f"{ranges_key}_start_{i}")
-        with cols[1]:
-            end_val = st.number_input(f"{label} End {i+1}", value=end, key=f"{ranges_key}_end_{i}", min_value=start_val)
-        with cols[2]:
-            if st.button("➖", key=f"{ranges_key}_remove_{i}"):
-                st.session_state[f"{ranges_key}_remove_clicked"] = i
-
-        new_ranges.append((start_val, end_val))
-
-    st.session_state[ranges_key] = new_ranges
-
-    # Add range button
-    if st.button(f"➕ Add {label} Range", key=f"add_{ranges_key}"):
-        st.session_state[f"{ranges_key}_add_clicked"] = True
-
-    return new_ranges
-
-
-
 left_col, right_col = st.columns(2)  # Adjust width
 
 with left_col:
@@ -378,8 +307,7 @@ with left_col:
                 location_dat = pd.read_csv(hubverse_location_file, delimiter=',')
                 location_dat.to_csv("data/location_dat.csv", index=False)
                 updated_params["location_dat_path"] = "data/location_dat.csv"
-                update_config_file(updated_params)
-                reload_runtime_config()
+                apply_runtime_config_updates(updated_params)
                 st.success("✅ Optional location/population data updated for Hubverse mode!")
                 st.rerun()
             except Exception as e:
@@ -396,10 +324,8 @@ with left_col:
                         f.write(hubverse_observed_file.getbuffer())
 
                     updated_params["hubverse_input_path"] = hubverse_path
-                    updated_params["hubvsereInput"] = hubverse_path
                     updated_params["hubverse_target"] = hubverse_target_value.strip() or None
-                    update_config_file(updated_params)
-                    reload_runtime_config()
+                    apply_runtime_config_updates(updated_params)
                     st.session_state["hubverse_upload_sig"] = hubverse_sig
                     st.success("✅ Hubverse observed target-data input enabled!")
                     st.rerun()
@@ -412,10 +338,8 @@ with left_col:
             if desired_target != current_target:
                 try:
                     updated_params["hubverse_input_path"] = active_hubverse_path
-                    updated_params["hubvsereInput"] = active_hubverse_path
                     updated_params["hubverse_target"] = desired_target or None
-                    update_config_file(updated_params)
-                    reload_runtime_config()
+                    apply_runtime_config_updates(updated_params)
                     st.success("✅ Hubverse target updated!")
                     st.rerun()
                 except Exception as e:
@@ -431,10 +355,8 @@ with left_col:
                     hosp_dat.to_csv("data/ts_dat.csv", index=False, header=False)
                     updated_params["ts_dat"] = "data/ts_dat.csv"
                     updated_params["hubverse_input_path"] = None
-                    updated_params["hubvsereInput"] = None
                     updated_params["hubverse_target"] = None
-                    update_config_file(updated_params)
-                    reload_runtime_config()
+                    apply_runtime_config_updates(updated_params)
                     st.session_state["matrix_upload_sig"] = matrix_sig
                     st.success("✅ Target matrix data updated!")
                     st.rerun()
@@ -447,8 +369,7 @@ with left_col:
                 location_dat = pd.read_csv(location_file, delimiter=',')
                 location_dat.to_csv("data/location_dat.csv", index=False)
                 updated_params["location_dat_path"] = "data/location_dat.csv"
-                update_config_file(updated_params)
-                reload_runtime_config()
+                apply_runtime_config_updates(updated_params)
                 st.success("✅ Location data updated!")
                 st.rerun()
             except Exception as e:
@@ -465,6 +386,21 @@ with left_col:
     min_date = reference_date.date()
     max_date = (reference_date + _timedelta_from_bins(max_bin_idx)).date()
 
+    auto_window_default = all(
+        getattr(config_param, key, None) is None
+        for key in (
+            "training_window_start_date",
+            "training_window_end_date",
+            "forecast_window_start_date",
+            "forecast_window_end_date",
+        )
+    )
+    use_auto_windows = st.checkbox(
+        "Use automatic training/forecast window defaults",
+        value=auto_window_default,
+        help="When enabled, LEMMA uses None for window dates at runtime and recomputes defaults from the active dataset.",
+    )
+
     train_col_1, train_col_2 = st.columns(2)
     with train_col_1:
         train_start_default = (reference_date + _timedelta_from_bins(max(0, min(int(config_param.start_train), max_bin_idx)))).date()
@@ -473,6 +409,7 @@ with left_col:
             value=train_start_default,
             min_value=min_date,
             max_value=max_date,
+            disabled=use_auto_windows,
         )
     with train_col_2:
         train_end_default = (reference_date + _timedelta_from_bins(max(0, min(int(config_param.end_train), max_bin_idx)))).date()
@@ -481,6 +418,7 @@ with left_col:
             value=train_end_default,
             min_value=min_date,
             max_value=max_date,
+            disabled=use_auto_windows,
         )
 
     forecast_col_1, forecast_col_2 = st.columns(2)
@@ -498,6 +436,7 @@ with left_col:
             value=forecast_start_default,
             min_value=min_date,
             max_value=max_date,
+            disabled=use_auto_windows,
         )
     with forecast_col_2:
         if forecast_mode == "Single origin date":
@@ -516,6 +455,7 @@ with left_col:
                 value=forecast_end_default,
                 min_value=min_date,
                 max_value=max_date,
+                disabled=use_auto_windows,
             )
 
     train_start_bin = _date_to_bin_index(train_start_date, reference_date, max_bin_idx)
@@ -523,29 +463,31 @@ with left_col:
     forecast_start_bin = _date_to_bin_index(forecast_start_date, reference_date, max_bin_idx)
     forecast_end_bin = _date_to_bin_index(forecast_end_date, reference_date, max_bin_idx)
 
-    train_start_label = pd.Timestamp(train_start_date).date().isoformat()
-    train_end_label = pd.Timestamp(train_end_date).date().isoformat()
-    forecast_start_label = pd.Timestamp(forecast_start_date).date().isoformat()
-    forecast_end_label = pd.Timestamp(forecast_end_date).date().isoformat()
+    if use_auto_windows:
+        updated_params["training_window_start_date"] = None
+        updated_params["training_window_end_date"] = None
+        updated_params["forecast_window_start_date"] = None
+        updated_params["forecast_window_end_date"] = None
+        auto_train_end_bin = max(0, max_bin_idx - int(config_param.weeks_ahead))
+        auto_train_start_bin = max(0, auto_train_end_bin - 10)
+        updated_params["start_train"] = auto_train_start_bin
+        updated_params["end_train"] = auto_train_end_bin
+        updated_params["start_test"] = max_bin_idx
+        updated_params["end_test"] = max_bin_idx
+    else:
+        train_start_label = pd.Timestamp(train_start_date).date().isoformat()
+        train_end_label = pd.Timestamp(train_end_date).date().isoformat()
+        forecast_start_label = pd.Timestamp(forecast_start_date).date().isoformat()
+        forecast_end_label = pd.Timestamp(forecast_end_date).date().isoformat()
 
-    updated_params["training_window_start_date"] = train_start_label
-    updated_params["training_window_end_date"] = train_end_label
-    updated_params["forecast_window_start_date"] = forecast_start_label
-    updated_params["forecast_window_end_date"] = forecast_end_label
-
-    # Merge lookbacks
-    train_days = sorted(set(np.arange(train_start_bin, train_end_bin + 2)))
-    train_lookback = [n_binned_steps - i for i in train_days]
-    test_days = sorted(set(np.arange(forecast_start_bin, forecast_end_bin + 1)))
-    test_lookback = [n_binned_steps - i for i in test_days]
-    retro_lookback = sorted(set(train_lookback + test_lookback))
-
-    # st.markdown("#### Preview")
-    # st.code(f"Run the predictors for:  {retro_lookback}")
-    # st.code(f"Generate forecasts for: {test_lookback}")
-
-
-
+        updated_params["training_window_start_date"] = train_start_label
+        updated_params["training_window_end_date"] = train_end_label
+        updated_params["forecast_window_start_date"] = forecast_start_label
+        updated_params["forecast_window_end_date"] = forecast_end_label
+        updated_params["start_train"] = train_start_bin
+        updated_params["end_train"] = train_end_bin
+        updated_params["start_test"] = forecast_start_bin
+        updated_params["end_test"] = forecast_end_bin
 
     skip_keys = {"start_train", "end_train", "start_test", "end_test"}
     for idx, key in enumerate(EDITABLE_PARAMS):
@@ -631,8 +573,7 @@ with right_col:
 
         if updated_params:
             try:
-                update_config_file(updated_params)
-                reload_runtime_config()
+                apply_runtime_config_updates(updated_params)
                 st.toast("✅ Configuration Updated!")
             except Exception as e:
                 st.error(f"❌ Error applying configuration: {e}")
@@ -645,7 +586,10 @@ with right_col:
             progress_bar.progress(progress)
             progress_text.info(f"Progress: {int(progress * 100)}%")
 
-        st.session_state["all_preds"], st.session_state["hosp_dat"] = gen_predictions.generate_all_preds(update_progress)
+        st.session_state["all_preds"], st.session_state["hosp_dat"] = gen_predictions.generate_all_preds(
+            update_progress,
+            use_threads=True,
+        )
 
         st.toast("✅ Predictors generated successfully!")
 
@@ -672,8 +616,7 @@ with right_col:
             # Optional: update only ensemble-related params (e.g., quantiles). For now, apply any updates.
             if updated_params:
                 try:
-                    update_config_file(updated_params)
-                    reload_runtime_config()
+                    apply_runtime_config_updates(updated_params)
                     st.toast("✅ Ensemble Configuration Updated!")
                 except Exception as e:
                     st.error(f"❌ Error applying configuration: {e}")
@@ -694,7 +637,6 @@ with right_col:
     state_select = st.selectbox("Select State", state_abbr)
     cid = state_abbr.index(state_select)    
     hosp_dat = config_param.hosp_dat
-    maxt = hosp_dat.shape[1]
     observed_data = bin_array((config_param.hosp_dat[cid, :]), 0, config_param.bin_size, 0)
     reference_date = pd.Timestamp(config_param.zero_date)
     observed_dates = [
